@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Estación Meteorológica en línea</title>
+<style>
+:root{--bg:#0b1220;--card:#131c2e;--tx:#e8eefc;--mut:#8da0c0;--ln:#22304a;--ac:#38bdf8}
+@media(prefers-color-scheme:light){:root{--bg:#eef3fb;--card:#fff;--tx:#0f1b33;--mut:#5b6b88;--ln:#dbe4f3;--ac:#0284c7}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx);padding-bottom:30px}
+header{padding:18px 14px 6px;text-align:center}
+h1{margin:0;font-size:22px}
+h2{font-size:17px;margin:20px 14px 8px}
+.sub{color:var(--mut);font-size:13px;margin-top:5px}
+.nota{color:var(--mut);font-size:12.5px;margin:0 14px 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:0 12px}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:16px;padding:14px}
+.top{display:flex;align-items:center;gap:8px}
+.em{font-size:24px}
+.nm{font-weight:600;flex:1}
+.bd{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;color:#fff;background:#64748b;white-space:nowrap}
+.val{font-size:40px;font-weight:700;margin:6px 0 0;line-height:1.1}
+.val small{font-size:15px;color:var(--mut);font-weight:500;margin-left:6px}
+.x{min-height:18px;font-size:13px;color:var(--mut);margin:2px 0 6px}
+.gauge{position:relative;display:flex;height:10px;border-radius:99px;overflow:hidden;margin:8px 0 12px;background:var(--ln)}
+.gauge i{display:block;height:100%;opacity:.85}
+.gauge b{position:absolute;top:-2px;width:4px;height:14px;background:var(--tx);border-radius:2px;transform:translateX(-50%);box-shadow:0 0 0 2px var(--card);transition:left .6s}
+canvas{width:100%;height:70px;display:block;margin-bottom:6px}
+details{font-size:13px;color:var(--mut)}
+summary{cursor:pointer;color:var(--ac);font-weight:600}
+details p{margin:6px 0 0;line-height:1.45}
+#resumen{margin:12px;text-align:center}
+#resumen .big{font-size:44px}
+#resumen .t{font-size:18px;font-weight:700}
+.aviso{margin:8px 12px;padding:10px 12px;border-radius:12px;background:#78350f;color:#fff;font-size:13.5px}
+.aviso.rojo{background:#7f1d1d}
+#off{display:none}
+.leyenda{display:flex;flex-wrap:wrap;gap:8px 14px;justify-content:center;font-size:13px;color:var(--mut);margin:14px 12px}
+button{font:inherit;font-weight:700;background:var(--ac);color:#fff;border:0;border-radius:12px;padding:11px 16px;margin:6px}
+.acc{text-align:center}
+footer{color:var(--mut);font-size:12px;text-align:center;margin:16px 14px}
+</style></head><body>
+<header>
+<h1>🌦️ Estación Meteorológica</h1>
+<div class="sub" id="hora">⏰ Conectando…</div>
+<div class="sub"><span id="wifi">📶 ...</span> &nbsp;·&nbsp; <span id="up">⏱️ ...</span></div>
+</header>
+<div class="aviso rojo" id="off">🔌 Sin conexión con la estación. Revisa que el celular esté en la misma red WiFi.</div>
+<div id="avisos"></div>
+<section class="card" id="resumen">Cargando…</section>
+<div id="grupos"></div>
+<div class="leyenda"><span>🟢 Bueno</span><span>🟡 Moderado</span><span>🟠 Alto</span><span>🔴 Malo</span><span>🟣 Muy malo</span></div>
+<footer>Los sensores MQ y MICS son indicadores aproximados, no equipos certificados. Para decisiones de seguridad usa un detector homologado. 🌍 Datos enviados por la estación a la nube.</footer>
+<script>
+// ===== CAMBIA SOLO ESTA LINEA: la direccion de tu base de datos de Firebase (sin "/" al final) =====
+const DB="https://estacion-meteo-1c3b1-default-rtdb.firebaseio.com";
+// ==================================================================================================
+const C={g:'#22c55e',y:'#eab308',o:'#f97316',r:'#ef4444',p:'#a855f7',m:'#9f1239',b:'#38bdf8'};
+const SEV={b:0,g:0,y:1,o:2,r:3,p:4,m:5};
+const GR=[['🌤️ Clima y confort','g1'],['🌬️ Calidad del aire','g2'],['☀️ Luz y sonido','g3'],['🧯 Gases (valores orientativos)','g4']];
+const M=[
+{k:'t',gr:0,e:'🌡️',n:'Temperatura',u:'°C',d:1,min:0,max:45,h:'t',z:[[18,'Fresco','b'],[26,'Confort','g'],[30,'Cálido','y'],[35,'Calor','o'],[99,'Calor extremo','r']],
+ i:'Qué tan caliente o fría está el aire. Entre 18 y 26 °C la mayoría de personas se siente cómoda.'},
+{k:'h',gr:0,e:'💧',n:'Humedad relativa',u:'%',d:0,min:0,max:100,h:'h',z:[[30,'Seca','y'],[60,'Confort','g'],[80,'Húmeda','b'],[101,'Muy húmeda','y']],
+ i:'Cantidad de vapor de agua en el aire. Entre 30 y 60 % es cómodo. Muy seco irrita la garganta y muy húmedo favorece el moho. En Lima es normal ver valores altos.'},
+{k:'dp',gr:0,e:'🌫️',n:'Punto de rocío',u:'°C',d:1,min:0,max:30,z:[[10,'Seco','b'],[16,'Cómodo','g'],[18,'Algo pegajoso','y'],[21,'Bochornoso','o'],[99,'Opresivo','r']],
+ i:'Temperatura a la que el vapor se convierte en gotitas. Si pasa de 18 °C el ambiente se siente pegajoso aunque la temperatura sea moderada.'},
+{k:'co2',gr:1,e:'🫁',n:'CO₂ (dióxido de carbono)',u:'ppm',d:0,min:400,max:2500,h:'co2',z:[[800,'Excelente','g'],[1000,'Bueno','g'],[1500,'Ventilar','y'],[2000,'Malo','o'],[99999,'Muy malo','r']],
+ i:'Al aire libre ronda 420 ppm. En un cuarto cerrado sube por la respiración. Sobre 1000 ppm conviene ventilar y sobre 2000 ppm aparece somnolencia y dolor de cabeza. Sensor SCD41.'},
+{k:'pm25',gr:1,e:'😷',n:'Partículas PM2.5',u:'µg/m³',d:0,min:0,max:150,h:'pm25',z:[[9.1,'Buena','g'],[35.5,'Moderada','y'],[55.5,'Dañina sensibles','o'],[125.5,'Dañina','r'],[225.5,'Muy dañina','p'],[99999,'Peligrosa','m']],
+ i:'Partículas finas de menos de 2.5 micras, unas 30 veces más delgadas que un cabello. Entran a los pulmones. La OMS recomienda no pasar de 15 µg/m³ de promedio en 24 horas. El AQI es el índice de calidad del aire de la EPA (0 a 500).'},
+{k:'pm10',gr:1,e:'🌪️',n:'Partículas PM10',u:'µg/m³',d:0,min:0,max:200,z:[[55,'Buena','g'],[155,'Moderada','y'],[255,'Dañina sensibles','o'],[355,'Dañina','r'],[425,'Muy dañina','p'],[99999,'Peligrosa','m']],
+ i:'Polvo, polen y humo de hasta 10 micras. Guía OMS: 45 µg/m³ de promedio en 24 horas.'},
+{k:'pm1',gr:1,e:'🔬',n:'Partículas PM1.0',u:'µg/m³',d:0,i:'Partículas ultrafinas, típicas de combustión y humo. No tiene una norma propia, se muestra como referencia.'},
+{k:'uvi',gr:2,e:'☀️',n:'Índice UV',u:'',d:1,min:0,max:12,h:'uvi',z:[[3,'Bajo','g'],[6,'Moderado','y'],[8,'Alto','o'],[11,'Muy alto','r'],[99,'Extremo','p']],
+ i:'Escala de la OMS: 0 a 2 bajo, 3 a 5 moderado, 6 a 7 alto, 8 a 10 muy alto, 11 o más extremo. Mide mejor a cielo abierto, detrás de vidrio marca menos. Sensor LTR390.'},
+{k:'lux',gr:2,e:'💡',n:'Luz ambiente',u:'lux',d:0,log:1,min:1,max:100000,z:[[10,'Noche','b'],[200,'Penumbra','b'],[1000,'Interior','b'],[10000,'Nublado','y'],[50000,'Día claro','y'],[9e9,'Sol directo','o']],
+ i:'Brillo del ambiente. Noche cerca de 1 lux, oficina 300 a 500 lux, día nublado unos 10 000 lux, sol directo hasta 100 000 lux.'},
+{k:'db',gr:2,e:'🔊',n:'Ruido',u:'dBA',d:0,min:30,max:130,h:'db',z:[[40,'Muy silencioso','g'],[55,'Tranquilo','g'],[70,'Moderado','y'],[85,'Ruidoso','o'],[100,'Dañino','r'],[115,'Muy dañino','p'],[999,'Dolor','m']],
+ i:'Decibeles ponderados A. Una conversación ronda 60 dBA y el tráfico intenso 80 dBA. Sobre 85 dBA sostenido puede dañar el oído y cerca de 120 dBA ya duele. El módulo mide de 30 a 130 dBA (0.6 a 2.6 V).'},
+{k:'ch4',gr:3,e:'🔥',n:'Metano / gas natural',u:'ppm',d:0,det:300,min:0,max:5000,z:[[300,'Sin detección','g'],[1000,'Trazas','y'],[5000,'Elevado','o'],[9e9,'Peligro','r']],
+ i:'Sensor MQ4, rango útil de unos 300 a 10 000 ppm. Sobre 5000 ppm (10 % del límite de explosión) hay riesgo. Valor estimado con la curva de la ficha.'},
+{k:'lpg',gr:3,e:'🛢️',n:'Gas LP (propano y butano)',u:'ppm',d:0,det:200,min:0,max:3000,z:[[200,'Sin detección','g'],[1000,'Trazas','y'],[2000,'Elevado','o'],[9e9,'Peligro','r']],
+ i:'Sensor MQ6, rango útil de 200 a 10 000 ppm. Sirve para detectar fugas de gas de cocina. Valor estimado.'},
+{k:'co',gr:3,e:'💨',n:'Monóxido de carbono',u:'ppm',d:0,det:10,min:0,max:120,z:[[10,'Sin detección','g'],[30,'Precaución','y'],[90,'Alto','o'],[9e9,'Peligro','r']],
+ i:'Sensor MQ9, rango de 10 a 1000 ppm. El CO no tiene color ni olor. Referencia OMS: unos 9 ppm en 8 horas y 30 ppm en 1 hora. Valor estimado.'},
+{k:'covoc',gr:3,e:'🧪',n:'Gases reductores (CO, VOC)',u:'%',d:0,min:0,max:100,z:[[15,'Aire limpio','g'],[40,'Algo de gases','y'],[70,'Elevado','o'],[9e9,'Alto','r']],
+ i:'Sensor MICS5524. 0 % es el aire limpio con el que calibraste. Detecta CO, hidrógeno, alcohol y compuestos orgánicos. Es un índice relativo, no ppm, porque la curva cambia mucho entre sensores.'},
+{k:'no2',gr:3,e:'🏭',n:'Gases oxidantes (NO₂)',u:'%',d:0,min:0,max:300,z:[[30,'Aire limpio','g'],[100,'Algo de NO₂','y'],[300,'Elevado','o'],[9e9,'Alto','r']],
+ i:'Sensor MICS2714, detecta NO₂ de 0.05 a 10 ppm. 0 % es aire limpio. Según la ficha, un aumento de 100 % equivale a 0.25 ppm de NO₂ o menos. Viene del tráfico vehicular.'}
+];
+const $=s=>document.querySelector(s);
+function aArr(x){if(Array.isArray(x))return x.map(v=>v==null?null:v);if(x&&typeof x=='object'){const k=Object.keys(x).map(Number);const n=Math.max(...k)+1;return Array.from({length:n},(_,i)=>x[i]==null?null:x[i])}return[]}
+const pos=(m,v)=>{let a=m.min,b=m.max;let p=m.log?(Math.log10(Math.max(v,a))-Math.log10(a))/(Math.log10(b)-Math.log10(a)):(v-a)/(b-a);return Math.min(1,Math.max(0,p))};
+function seg(m){
+ if(!m.z)return '';let s='',prev=m.min;
+ for(const z of m.z){const up=Math.min(z[0],m.max);if(up<=prev)continue;
+  const w=(pos(m,up)-pos(m,prev))*100;s+=`<i style="flex:${w};background:${C[z[2]]}"></i>`;prev=up;if(up>=m.max)break}
+ return s}
+function aqi(c){c=Math.floor(c*10)/10;
+ const B=[[0,9,0,50],[9.1,35.4,51,100],[35.5,55.4,101,150],[55.5,125.4,151,200],[125.5,225.4,201,300],[225.5,325.4,301,500]];
+ for(const[b0,b1,i0,i1]of B){if(c<=b1)return Math.round((i1-i0)/(b1-b0)*(Math.max(c,b0)-b0)+i0)}return 500}
+function build(){
+ GR.forEach((g,i)=>{const s=document.createElement('section');
+  s.innerHTML=`<h2>${g[0]}</h2>`+(i==3?'<p class="nota">Estimaciones con curvas de las fichas técnicas. Calibra en aire limpio para mejorar la lectura.</p>':'')+`<div class="grid" id="${g[1]}"></div>`;
+  $('#grupos').appendChild(s)});
+ M.forEach(m=>{const a=document.createElement('article');a.className='card';
+  a.innerHTML=`<div class="top"><span class="em">${m.e}</span><span class="nm">${m.n}</span><span class="bd" id="b_${m.k}">...</span></div>
+  <div class="val"><span id="v_${m.k}">...</span><small>${m.u}</small></div>
+  <div class="x" id="x_${m.k}"></div>
+  ${m.z?`<div class="gauge">${seg(m)}<b id="g_${m.k}" style="left:0"></b></div>`:''}
+  ${m.h?`<canvas id="c_${m.k}"></canvas>`:''}
+  <details><summary>ℹ️ ¿Qué significa?</summary><p>${m.i}</p></details>`;
+  $('#'+GR[m.gr][1]).appendChild(a)})}
+function upd(m,v,D){
+ const bd=$('#b_'+m.k),vv=$('#v_'+m.k),x=$('#x_'+m.k);
+ if(v==null||isNaN(v)){vv.textContent='...';bd.textContent='Sin dato';bd.style.background='#64748b';bd.style.color='#fff';x.textContent='';return -1}
+ const z=m.z?(m.z.find(a=>v<a[0])||m.z[m.z.length-1]):null;
+ vv.textContent=(m.det&&v<m.det)?'< '+m.det:v.toFixed(m.d);
+ if(z){bd.textContent=z[1];bd.style.background=C[z[2]];bd.style.color=(z[2]=='y'||z[2]=='b')?'#111':'#fff'}
+ else{bd.textContent='Informativo';bd.style.background='#64748b';bd.style.color='#fff'}
+ const g=$('#g_'+m.k);if(g)g.style.left=(pos(m,v)*100)+'%';
+ let t='';
+ if(m.k=='pm25')t='📊 AQI (EPA): '+aqi(v);
+ if(m.k=='db'&&D.dbpk!=null)t='📈 Pico reciente: '+D.dbpk.toFixed(0)+' dBA';
+ if(m.k=='uvi')t=v<3?'😎 Sin protección especial':v<6?'🧢 Gorra y bloqueador':v<8?'🧴 Protección necesaria':v<11?'⚠️ Evita el sol de 10 a 16 h':'🚫 Evita exponerte al sol';
+ if(m.k=='co2')t=v<1000?'🌿 Aire renovado':'🪟 Abre una ventana';
+ if(m.k=='t'&&D.dp!=null)t='🌡️ Punto de rocío '+D.dp.toFixed(1)+' °C';
+ if(D.sat&&D.sat.includes(m.k))t='⚠️ Señal al máximo del ADC: el valor real puede ser mayor';
+ x.textContent=t;
+ return z?SEV[z[2]]:0}
+let D={};
+function render(D){
+ $('#hora').textContent='⏰ Hora de Perú 🇵🇪: '+D.time;
+ const r=D.rssi,q=r>-60?'Excelente':r>-75?'Buena':'Débil';
+ $('#wifi').textContent='📶 WiFi '+q+' ('+r+' dBm)';
+ const s=D.up,h=Math.floor(s/3600),mi=Math.floor(s%3600/60);
+ $('#up').textContent='⏱️ Encendida: '+(h?h+' h ':'')+mi+' min';
+ const K=['pm25','pm10','co2','co','ch4','lpg'];let w=0,list=[];
+ M.forEach(m=>{const sv=upd(m,D[m.k],D);if(K.includes(m.k)){if(sv>w)w=sv;if(sv>=1)list.push(m.n)}});
+ const R=[['😀','Aire en buen estado','Todo dentro de rangos saludables'],['🙂','Aire aceptable','Algún valor moderado: '],['😷','Atención con el aire','Valores altos en: '],['🚨','Aire malo','Valores peligrosos en: '],['🚨','Aire muy malo','Valores peligrosos en: '],['🚨','Peligro','Valores peligrosos en: ']][Math.min(w,5)];
+ $('#resumen').innerHTML=`<div class="big">${R[0]}</div><div class="t">${R[1]}</div><div class="sub">${R[2]}${w?list.join(', '):''}</div>`;
+ let a='';const o=D.ok||{};
+ if(!o.ltr)a+='<div class="aviso rojo">⚠️ LTR390 (luz y UV) no responde. Revisa SDA y SCL.</div>';
+ if(!o.scdd)a+='<div class="aviso rojo">⚠️ SCD41 no responde en el I2C. Revisa SDA (GPIO3), SCL (GPIO2) y su alimentación.</div>';
+ else if(!o.scd)a+=`<div class="aviso rojo">⚠️ SCD41 detectado pero sin mediciones (reinicios: ${D.scdr}). Suele ser alimentación débil: cables cortos y un condensador de 100 µF entre VCC y GND del sensor.</div>`;
+ if(!o.rtc)a+='<div class="aviso rojo">⚠️ Reloj DS3231 no responde.</div>';
+ if(!o.pms)a+='<div class="aviso rojo">⚠️ Sensor Plantower sin datos. Revisa TX en GPIO10 y que tenga 5 V.</div>';
+ if(D.warm>0)a+=`<div class="aviso">🔥 Sensores de gas calentando: faltan ${D.warm} s. Los valores de gases aún no son confiables.</div>`;
+ else if(!D.cal)a+='<div class="aviso">🧪 Gases sin calibrar. Calíbralos desde la página local de la estación (en su mismo WiFi).</div>';
+ $('#avisos').innerHTML=a}
+async function poll(){
+ if(document.hidden&&D.ts)return;
+ try{const r=await fetch(DB+'/estacion/ultimo.json',{cache:'no-store'});const J=await r.json();
+  if(!J||typeof J!='object')throw 0;
+  D=J;render(D);
+  const e=D.ts?(Date.now()-D.ts)/1000:999999;
+  if(e>90){$('#off').textContent='🔌 La estación no envía datos desde hace '+(e>7200?Math.round(e/3600)+' h':Math.max(1,Math.round(e/60))+' min')+'. Revisa que esté encendida y con WiFi. Abajo se ve el último dato recibido.';$('#off').style.display='block'}
+  else $('#off').style.display='none'}
+ catch(e){$('#off').textContent='🔌 No se pudo leer la nube. Revisa tu internet y la dirección DB del código.';$('#off').style.display='block'}}
+function spark(m,arr){
+ const c=$('#c_'+m.k);if(!c)return;
+ const R=window.devicePixelRatio||1,W=c.clientWidth,H=c.clientHeight;c.width=W*R;c.height=H*R;
+ const x=c.getContext('2d');x.scale(R,R);x.clearRect(0,0,W,H);
+ const st=getComputedStyle(document.body),mut=st.getPropertyValue('--mut'),ac=st.getPropertyValue('--ac');
+ const v=arr.filter(q=>q!==null);x.font='11px sans-serif';x.fillStyle=mut;
+ if(v.length<2){x.fillText('Recopilando datos…',6,H/2);return}
+ let lo=Math.min(...v),hi=Math.max(...v);if(hi-lo<1e-6){lo-=1;hi+=1}
+ const px=i=>6+(W-12)*i/(arr.length-1),py=y=>H-14-(H-28)*(y-lo)/(hi-lo);
+ x.strokeStyle=ac;x.lineWidth=2;x.beginPath();let f=true,li=0;
+ arr.forEach((y,i)=>{if(y===null){f=true;return}if(f){x.moveTo(px(i),py(y));f=false}else x.lineTo(px(i),py(y));li=i});
+ x.stroke();x.lineTo(px(li),H-14);x.lineTo(px(arr.findIndex(q=>q!==null)),H-14);x.globalAlpha=.15;x.fillStyle=ac;x.fill();x.globalAlpha=1;x.fillStyle=mut;
+ x.fillText(hi.toFixed(m.d||0),6,10);x.fillText(lo.toFixed(m.d||0),6,H-2);
+ const mins=Math.round(arr.length*0.5);x.textAlign='right';x.fillText('últimos '+mins+' min',W-6,H-2);x.textAlign='left'}
+async function hist(){
+ if(document.hidden)return;
+ try{const r=await fetch(DB+'/estacion/hist.json',{cache:'no-store'});const H=await r.json();if(!H)return;
+  M.forEach(m=>{if(m.h&&H[m.h])spark(m,aArr(H[m.h]))})}catch(e){}}
+build();poll();hist();setInterval(poll,5000);setInterval(hist,60000);
+</script></body></html>
