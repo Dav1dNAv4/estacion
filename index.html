@@ -37,6 +37,9 @@ details p{margin:6px 0 0;line-height:1.45}
 .leyenda{display:flex;flex-wrap:wrap;gap:8px 14px;justify-content:center;font-size:13px;color:var(--mut);margin:14px 12px}
 button{font:inherit;font-weight:700;background:var(--ac);color:#fff;border:0;border-radius:12px;padding:11px 16px;margin:6px}
 .acc{text-align:center}
+#dl{margin:12px;text-align:center}
+#dl .nm{font-size:17px}
+button:disabled{opacity:.5}
 footer{color:var(--mut);font-size:12px;text-align:center;margin:16px 14px}
 </style></head><body>
 <header>
@@ -49,6 +52,17 @@ footer{color:var(--mut);font-size:12px;text-align:center;margin:16px 14px}
 <section class="card" id="resumen">Cargando…</section>
 <div id="grupos"></div>
 <div class="leyenda"><span>🟢 Bueno</span><span>🟡 Moderado</span><span>🟠 Alto</span><span>🔴 Malo</span><span>🟣 Muy malo</span></div>
+<section class="card" id="dl">
+<div class="nm">💾 Descargar datos</div>
+<div class="x" id="sdtxt"></div>
+<div class="acc">
+<button onclick="bajar(3600,'ultima_hora')">⬇️ Última hora</button>
+<button onclick="bajar(86400,'ultimo_dia')">⬇️ Último día</button>
+<button onclick="bajar(0,'total')">⬇️ Todo lo registrado</button>
+</div>
+<div class="x" id="dlst"></div>
+<details><summary>ℹ️ ¿Qué descargo?</summary><p>Un archivo CSV (se abre con Excel) con una fila por minuto, con la hora de Perú. Son los datos que la estación guarda en la nube desde que se activó el registro. "Todo lo registrado" puede tardar si hay muchos días. La tarjeta SD de la estación guarda además una fila cada 2 segundos.</p></details>
+</section>
 <footer>Los sensores MQ y MICS son indicadores aproximados, no equipos certificados. Para decisiones de seguridad usa un detector homologado. 🌍 Datos enviados por la estación a la nube.</footer>
 <script>
 // ===== CAMBIA SOLO ESTA LINEA: la direccion de tu base de datos de Firebase (sin "/" al final) =====
@@ -147,6 +161,9 @@ function render(D){
  if(!o.pms)a+='<div class="aviso rojo">⚠️ Sensor Plantower sin datos. Revisa TX en GPIO10 y que tenga 5 V.</div>';
  if(D.warm>0)a+=`<div class="aviso">🔥 Sensores de gas calentando: faltan ${D.warm} s. Los valores de gases aún no son confiables.</div>`;
  else if(!D.cal)a+='<div class="aviso">🧪 Gases sin calibrar. Calíbralos desde la página local de la estación (en su mismo WiFi).</div>';
+ const ST=['💾 SD: verificando…','💾 SD: grabando correctamente ✅','⚠️ SD: el OpenLog no responde. Revisa RXI a GPIO11, TXO a GPIO7, alimentación y GND.','⚠️ SD: el OpenLog responde pero el archivo no crece. Revisa que la tarjeta no esté llena, protegida o mal formateada (FAT32).','⚠️ SD: no se pudo abrir el archivo de registro.'];
+ if(D.sd>=2)a+='<div class="aviso rojo">'+ST[D.sd]+'</div>';
+ $('#sdtxt').textContent=D.sd==null?'':(ST[D.sd]||ST[0])+(D.sd==1&&D.sdkb>=0?' · ESTACION.CSV: '+D.sdkb+' KB':'');
  $('#avisos').innerHTML=a}
 async function poll(){
  if(document.hidden&&D.ts)return;
@@ -175,5 +192,26 @@ async function hist(){
  if(document.hidden)return;
  try{const r=await fetch(DB+'/estacion/hist.json',{cache:'no-store'});const H=await r.json();if(!H)return;
   M.forEach(m=>{if(m.h&&H[m.h])spark(m,aArr(H[m.h]))})}catch(e){}}
+const CAB='fecha_hora,temp_C,hum_pct,rocio_C,co2_ppm,pm1,pm25,pm10,lux,uvi,ruido_dBA,ruido_pico,ch4_ppm,glp_ppm,co_ppm,no2_idx,covoc_idx';
+const fh=ts=>new Date((ts-18000)*1000).toISOString().slice(0,19).replace('T',' ');   // hora de Peru (UTC-5)
+function armarCSV(J){
+ const ks=J&&typeof J=='object'?Object.keys(J).filter(k=>typeof J[k]=='string').sort():[];
+ return{n:ks.length,ini:ks.length?fh(+ks[0]):'',fin:ks.length?fh(+ks[ks.length-1]):'',csv:CAB+'\r\n'+ks.map(k=>fh(+k)+','+J[k]+'\r\n').join('')}}
+async function bajar(seg,nombre){
+ const st=$('#dlst'),bs=document.querySelectorAll('#dl button');
+ bs.forEach(b=>b.disabled=true);st.textContent='⏳ Descargando de la nube…';
+ try{
+  let url=DB+'/estacion/reg.json';
+  if(seg){const desde=Math.floor(Date.now()/1000)-seg;url+='?orderBy='+encodeURIComponent('"$key"')+'&startAt='+encodeURIComponent('"'+desde+'"')}
+  const r=await fetch(url,{cache:'no-store'});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const R=armarCSV(await r.json());
+  if(!R.n){st.textContent='⚠️ Todavía no hay registros en ese periodo. La estación guarda uno por minuto.';return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([R.csv],{type:'text/csv;charset=utf-8'}));
+  a.download='estacion_'+nombre+'_'+fh(Math.floor(Date.now()/1000)).slice(0,10)+'.csv';
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  st.textContent='✅ '+R.n+' filas descargadas ('+R.ini+' a '+R.fin+')'}
+ catch(e){st.textContent='⚠️ No se pudo descargar ('+e.message+'). Revisa tu internet y las reglas de Firebase.'}
+ finally{bs.forEach(b=>b.disabled=false)}}
 build();poll();hist();setInterval(poll,5000);setInterval(hist,60000);
 </script></body></html>
